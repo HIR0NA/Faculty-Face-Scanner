@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Faculty Face Scanner</title>
+    <style>
+        /* ══════════════════════════════════════════════
+           JARVIS THEME — Iron Man HUD Style
+           ══════════════════════════════════════════════ */
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0e17;
+            --bg2: #0d1422;
+            --panel: rgba(10, 30, 60, 0.85);
+            --cyan: #00d4ff;
+            --cyan2: #00f0ff;
+            --cyan-dim: rgba(0, 212, 255, 0.15);
+            --cyan-glow: 0 0 15px rgba(0, 212, 255, 0.4);
+            --green: #00ff88;
+            --red: #ff3333;
+            --orange: #ffaa00;
+            --text: #c8e6ff;
+            --text-dim: #6888aa;
+            --border: rgba(0, 180, 255, 0.3);
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated background grid */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background:
+                linear-gradient(rgba(0,180,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,180,255,0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ── HEADER ── */
+        .header {
+            position: relative;
+            text-align: center;
+            padding: 25px 20px 15px;
+            background: linear-gradient(180deg, rgba(0,40,80,0.5) 0%, transparent 100%);
+            border-bottom: 1px solid var(--border);
+            z-index: 1;
+        }
+        .header h1 {
+            font-family: 'Orbitron', monospace;
+            font-size: 2.2em;
+            font-weight: 900;
+            color: var(--cyan);
+            text-shadow: var(--cyan-glow), 0 0 40px rgba(0,180,255,0.2);
+            letter-spacing: 6px;
+        }
+        .header .subtitle {
+            font-size: 0.95em;
+            color: var(--text-dim);
+            letter-spacing: 3px;
+            margin-top: 4px;
+        }
+        .header .arc-reactor {
+            display: inline-block;
+            width: 36px; height: 36px;
+            border: 2px solid var(--cyan);
+            border-radius: 50%;
+            margin-right: 12px;
+            vertical-align: middle;
+            position: relative;
+            box-shadow: var(--cyan-glow), inset 0 0 12px rgba(0,200,255,0.3);
+            animation: pulse-reactor 2s ease-in-out infinite;
+        }
+        .header .arc-reactor::after {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 12px; height: 12px;
+            background: var(--cyan);
+            border-radius: 50%;
+            box-shadow: 0 0 20px var(--cyan);
+        }
+        @keyframes pulse-reactor {
+            0%, 100% { box-shadow: var(--cyan-glow), inset 0 0 12px rgba(0,200,255,0.3); }
+            50% { box-shadow: 0 0 25px rgba(0,212,255,0.6), inset 0 0 20px rgba(0,200,255,0.5); }
+        }
+
+        /* ── LAYOUT ── */
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 20px;
+        }
+
+        /* ── PANELS ── */
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            position: relative;
+        }
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+        }
+        .panel-title {
+            font-family: 'Orbitron', monospace;
+            font-size: 0.85em;
+            color: var(--cyan);
+            letter-spacing: 3px;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(0,180,255,0.15);
+        }
+
+        /* ── SIDEBAR ── */
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 25px 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-zone:hover {
+            border-color: var(--cyan);
+            background: var(--cyan-dim);
+        }
+        .upload-zone.dragover {
+            border-color: var(--green);
+            background: rgba(0,255,136,0.1);
+        }
+        .upload-zone .icon { font-size: 2.5em; margin-bottom: 8px; }
+        .upload-zone p { color: var(--text-dim); font-size: 0.9em; }
+
+        /* Sample Thumbnails */
+        .samples-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .sample-thumb {
+            position: relative;
+            width: 70px; height: 70px;
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .sample-thumb img {
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        .sample-thumb .delete-btn {
+            position: absolute;
+            top: 2px; right: 2px;
+            width: 20px; height: 20px;
+            background: rgba(255,0,0,0.8);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        .sample-thumb:hover .delete-btn { display: flex; }
+
+        /* Form Controls */
+        .form-group { margin-bottom: 12px; }
+        .form-group label {
+            display: block;
+            font-size: 0.8em;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(0,20,40,0.8);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.95em;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--cyan);
+            box-shadow: 0 0 8px rgba(0,200,255,0.2);
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid var(--cyan);
+            border-radius: 6px;
+            background: rgba(0,180,255,0.1);
+            color: var(--cyan);
+            font-family: 'Orbitron', monospace;
+            font-size: 0.85em;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 8px;
+        }
+        .btn:hover {
+            background: rgba(0,180,255,0.25);
+            box-shadow: var(--cyan-glow);
+        }
+        .btn.active {
+            background: rgba(0,180,255,0.3);
+            animation: btn-glow 1.5s ease-in-out infinite;
+        }
+        .btn-stop {
+            border-color: var(--red);
+            color: var(--red);
+            background: rgba(255,50,50,0.1);
+        }
+        .btn-stop:hover {
+            background: rgba(255,50,50,0.25);
+        }
+        @keyframes btn-glow {
+            0%, 100% { box-shadow: 0 0 8px rgba(0,200,255,0.2); }
+            50% { box-shadow: 0 0 20px rgba(0,200,255,0.5); }
+        }
+
+        /* ── STATUS PANEL ── */
+        .status-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        .stat-box {
+            background: rgba(0,20,40,0.6);
+            border: 1px solid rgba(0,120,200,0.2);
+            border-radius: 6px;
+            padding: 10px;
+            text-align: center;
+        }
+        .stat-box .value {
+            font-family: 'Orbitron', monospace;
+            font-size: 1.6em;
+            color: var(--cyan);
+            text-shadow: 0 0 10px rgba(0,200,255,0.3);
+        }
+        .stat-box .label {
+            font-size: 0.7em;
+            color: var(--text-dim);
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            background: rgba(0,20,40,0.5);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            height: 28px;
+            margin: 12px 0;
+            overflow: hidden;
+            position: relative;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, rgba(0,180,255,0.3), var(--cyan));
+            border-radius: 4px;
+            transition: width 0.5s ease;
+            position: relative;
+        }
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 50%, transparent 100%);
+            animation: shimmer 2s infinite;
+        }
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        .progress-text {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Orbitron', monospace;
+            font-size: 0.75em;
+            color: white;
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+            z-index: 2;
+        }
+
+        /* Status message */
+        .status-message {
+            text-align: center;
+            padding: 8px;
+            font-size: 0.9em;
+            color: var(--cyan);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: rgba(0,40,80,0.3);
+            margin-bottom: 15px;
+        }
+        .status-message.error { color: var(--red); border-color: rgba(255,50,50,0.3); }
+        .status-message.done { color: var(--green); border-color: rgba(0,255,136,0.3); }
+
+        /* ── RESULTS GRID ── */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-top: 15px;
+        }
+        .result-card {
+            background: rgba(0,15,30,0.8);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        .result-card:hover {
+            border-color: var(--cyan);
+            box-shadow: 0 0 20px rgba(0,180,255,0.15);
+            transform: translateY(-2px);
+        }
+        .result-card img {
+            width: 100%;
+            aspect-ratio: 4/3;
+            object-fit: cover;
+            display: block;
+            border-bottom: 1px solid var(--border);
+        }
+        .result-info {
+            padding: 12px;
+        }
+        .result-info .sim-score {
+            font-family: 'Orbitron', monospace;
+            font-size: 1.3em;
+            color: var(--cyan);
+            text-shadow: 0 0 8px rgba(0,200,255,0.3);
+        }
+        .result-info .sim-score.high { color: var(--green); }
+        .result-info .source-title {
+            font-size: 0.85em;
+            color: var(--text);
+            margin-top: 6px;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .result-info .source-link {
+            font-size: 0.75em;
+            color: var(--text-dim);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+        .result-info .source-link a {
+            color: var(--cyan);
+            opacity: 0.6;
+            text-decoration: none;
+        }
+        .result-info .source-link a:hover { opacity: 1; }
+        .result-info .timestamp {
+            font-size: 0.7em;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        /* ── LOG FEED ── */
+        .log-feed {
+            background: rgba(0,10,20,0.9);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            height: 180px;
+            overflow-y: auto;
+            padding: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75em;
+            color: var(--text-dim);
+            margin-top: 12px;
+        }
+        .log-feed::-webkit-scrollbar { width: 4px; }
+        .log-feed::-webkit-scrollbar-track { background: transparent; }
+        .log-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .log-line { padding: 1px 0; }
+        .log-line .time { color: var(--text-dim); }
+        .log-line.match { color: var(--green); }
+        .log-line.error { color: var(--red); }
+        .log-line.warn { color: var(--orange); }
+
+        /* ── EMPTY STATE ── */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-dim);
+        }
+        .empty-state .icon { font-size: 4em; opacity: 0.3; }
+        .empty-state p { margin-top: 12px; font-size: 1em; }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            .status-bar {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* Hidden file input */
+        #fileInput { display: none; }
+    </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+    <h1><span class="arc-reactor"></span>J.A.R.V.I.S.</h1>
+    <div class="subtitle">FACULTY FACE RECOGNITION SYSTEM</div>
+</div>
+
+<div class="container">
+
+    <!-- ══ SIDEBAR ══ -->
+    <div class="sidebar">
+
+        <!-- Upload Panel -->
+        <div class="panel">
+            <div class="panel-title">TARGET SAMPLES</div>
+            <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+                <div class="icon">📸</div>
+                <p>คลิกหรือลากรูปอาจารย์มาวางที่นี่</p>
+                <p style="font-size:0.8em; margin-top:4px">รองรับ: JPG, PNG, WEBP</p>
+            </div>
+            <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.webp,.bmp">
+            <div class="samples-grid" id="samplesGrid"></div>
+        </div>
+
+        <!-- Config Panel -->
+        <div class="panel">
+            <div class="panel-title">SCAN CONFIG</div>
+            <div class="form-group">
+                <label>TARGET URL</label>
+                <input type="text" id="startUrl" value="https://www.dusit.ac.th/home/?s=%E0%B8%A7%E0%B8%B4%E0%B8%8A%E0%B8%8A%E0%B8%B2+%E0%B8%89%E0%B8%B4%E0%B8%A1%E0%B8%9E%E0%B8%A5%E0%B8%B5" placeholder="https://...">
+            </div>
+            <div class="form-group">
+                <label>CRAWL DEPTH</label>
+                <input type="number" id="maxDepth" value="1" min="0" max="5">
+            </div>
+            <div class="form-group">
+                <label>SIMILARITY THRESHOLD</label>
+                <input type="number" id="threshold" value="0.40" min="0.1" max="1.0" step="0.05">
+            </div>
+            <div class="form-group">
+                <label>DETECTION SIZE</label>
+                <select id="detSize">
+                    <option value="640">640 (เร็ว)</option>
+                    <option value="960">960 (สมดุล)</option>
+                    <option value="1280" selected>1280 (แม่นยำ)</option>
+                </select>
+            </div>
+            <button class="btn" id="btnScan" onclick="startScan()">▶ INITIATE SCAN</button>
+            <button class="btn btn-stop" id="btnStop" onclick="stopScan()" style="display:none">■ ABORT SCAN</button>
+        </div>
+
+        <!-- Log Feed -->
+        <div class="panel">
+            <div class="panel-title">SYSTEM LOG</div>
+            <div class="log-feed" id="logFeed">
+                <div class="log-line"><span class="time">--:--:--</span> JARVIS: Awaiting your command, sir.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ MAIN CONTENT ══ -->
+    <div class="main-content">
+
+        <!-- Status Panel -->
+        <div class="panel">
+            <div class="panel-title">SCAN STATUS</div>
+            <div class="status-message" id="statusMsg">ระบบพร้อมใช้งาน — อัปโหลดรูปตัวอย่างแล้วกด INITIATE SCAN</div>
+
+            <div class="status-bar">
+                <div class="stat-box">
+                    <div class="value" id="statPages">0</div>
+                    <div class="label">PAGES</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value" id="statImages">0</div>
+                    <div class="label">IMAGES</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value" id="statFaces">0</div>
+                    <div class="label">FACES</div>
+                </div>
+                <div class="stat-box">
+                    <div class="value" id="statMatches">0</div>
+                    <div class="label">MATCHES</div>
+                </div>
+            </div>
+
+            <div class="progress-container" id="progressContainer" style="display:none">
+                <div class="progress-bar" id="progressBar" style="width:0%"></div>
+                <div class="progress-text" id="progressText">0%</div>
+            </div>
+        </div>
+
+        <!-- Results Panel -->
+        <div class="panel" style="margin-top:16px">
+            <div class="panel-title">
+                IDENTIFIED MATCHES
+                <span id="matchCount" style="float:right; color: var(--green)"></span>
+            </div>
+
+            <div id="resultsArea">
+                <div class="empty-state" id="emptyState">
+                    <div class="icon">🔍</div>
+                    <p>ยังไม่มีผลลัพธ์ — เริ่มสแกนเพื่อค้นหาใบหน้า</p>
+                </div>
+                <div class="results-grid" id="resultsGrid"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+//  J.A.R.V.I.S. Frontend Controller
+// ══════════════════════════════════════════════
+
+let pollTimer = null;
+let lastLogCount = 0;
+
+// ── Upload Handling ──
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    uploadFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
+
+function uploadFiles(files) {
+    const formData = new FormData();
+    for (const f of files) formData.append('files', f);
+
+    fetch('/api/samples/upload', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.count > 0) loadSamples();
+        });
+}
+
+function loadSamples() {
+    fetch('/api/samples')
+        .then(r => r.json())
+        .then(data => {
+            const grid = document.getElementById('samplesGrid');
+            grid.innerHTML = '';
+            data.samples.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'sample-thumb';
+                div.innerHTML = `
+                    <img src="/api/samples/image/${s.name}" alt="${s.name}">
+                    <button class="delete-btn" onclick="deleteSample('${s.name}')">&times;</button>
+                `;
+                grid.appendChild(div);
+            });
+        });
+}
+
+function deleteSample(name) {
+    fetch(`/api/samples/delete/${name}`, { method: 'DELETE' })
+        .then(() => loadSamples());
+}
+
+// ── Scanner Control ──
+function startScan() {
+    const config = {
+        start_url: document.getElementById('startUrl').value,
+        max_depth: parseInt(document.getElementById('maxDepth').value),
+        threshold: parseFloat(document.getElementById('threshold').value),
+        det_size: parseInt(document.getElementById('detSize').value),
+    };
+
+    fetch('/api/scan/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+    }).then(r => r.json()).then(() => {
+        document.getElementById('btnScan').style.display = 'none';
+        document.getElementById('btnStop').style.display = 'block';
+        document.getElementById('progressContainer').style.display = 'block';
+        document.getElementById('resultsGrid').innerHTML = '';
+        document.getElementById('emptyState').style.display = 'none';
+        lastLogCount = 0;
+        startPolling();
+    });
+}
+
+function stopScan() {
+    fetch('/api/scan/stop', { method: 'POST' });
+}
+
+// ── Polling ──
+function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(updateStatus, 1500);
+}
+
+function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function updateStatus() {
+    fetch('/api/status')
+        .then(r => r.json())
+        .then(state => {
+            // Stats
+            document.getElementById('statPages').textContent = state.pages_crawled;
+            document.getElementById('statImages').textContent = state.images_found;
+            document.getElementById('statFaces').textContent = state.faces_detected;
+            document.getElementById('statMatches').textContent = state.matches_found;
+
+            // Status message
+            const msgEl = document.getElementById('statusMsg');
+            msgEl.textContent = `${state.message} [${state.elapsed}]`;
+            msgEl.className = 'status-message';
+            if (state.status === 'error') msgEl.classList.add('error');
+            if (state.status === 'done') msgEl.classList.add('done');
+
+            // Progress bar
+            const pct = state.total > 0 ? Math.round((state.progress / state.total) * 100) : 0;
+            document.getElementById('progressBar').style.width = pct + '%';
+            document.getElementById('progressText').textContent = `${state.progress}/${state.total} (${pct}%)`;
+
+            if (state.status === 'scanning' || state.status === 'crawling') {
+                document.getElementById('progressContainer').style.display = 'block';
+                document.getElementById('btnScan').style.display = 'none';
+                document.getElementById('btnScan').classList.add('active');
+                document.getElementById('btnStop').style.display = 'block';
+            }
+
+            // Log feed
+            const logFeed = document.getElementById('logFeed');
+            if (state.log_lines.length > lastLogCount) {
+                const newLines = state.log_lines.slice(lastLogCount);
+                newLines.forEach(line => {
+                    const div = document.createElement('div');
+                    div.className = 'log-line';
+                    if (line.msg.includes('MATCH')) div.classList.add('match');
+                    if (line.msg.includes('ERROR')) div.classList.add('error');
+                    if (line.msg.includes('WARNING')) div.classList.add('warn');
+                    div.innerHTML = `<span class="time">${line.time}</span> ${line.msg}`;
+                    logFeed.appendChild(div);
+                });
+                logFeed.scrollTop = logFeed.scrollHeight;
+                lastLogCount = state.log_lines.length;
+            }
+
+            // Results
+            if (state.matches && state.matches.length > 0) {
+                document.getElementById('emptyState').style.display = 'none';
+                document.getElementById('matchCount').textContent = `${state.matches.length} found`;
+                renderResults(state.matches);
+            }
+
+            // Done or error
+            if (state.status === 'done' || state.status === 'error' || state.status === 'idle') {
+                document.getElementById('btnScan').style.display = 'block';
+                document.getElementById('btnScan').classList.remove('active');
+                document.getElementById('btnStop').style.display = 'none';
+                if (state.status === 'done' || state.status === 'idle') stopPolling();
+            }
+        });
+}
+
+function renderResults(matches) {
+    const grid = document.getElementById('resultsGrid');
+    // Only add new cards
+    const existing = grid.querySelectorAll('.result-card').length;
+    const sorted = [...matches].sort((a, b) => b.similarity - a.similarity);
+
+    if (sorted.length !== existing) {
+        grid.innerHTML = '';
+        sorted.forEach(m => {
+            const simClass = m.similarity >= 0.60 ? 'high' : '';
+            const simPct = (m.similarity * 100).toFixed(1);
+            const card = document.createElement('div');
+            card.className = 'result-card';
+            card.innerHTML = `
+                <img src="/api/results/image/${m.filename}" alt="Match" loading="lazy">
+                <div class="result-info">
+                    <div class="sim-score ${simClass}">${simPct}%</div>
+                    <div class="source-title">${m.page_title || 'ไม่ระบุกิจกรรม'}</div>
+                    <div class="source-link">
+                        <a href="${m.source_page}" target="_blank">🔗 ดูหน้าต้นฉบับ</a>
+                    </div>
+                    <div class="timestamp">🕐 ${m.timestamp}</div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    }
+}
+
+// ── Init ──
+loadSamples();
+// Check if scan is already running
+fetch('/api/status').then(r => r.json()).then(state => {
+    if (state.status !== 'idle' && state.status !== 'done' && state.status !== 'error') {
+        document.getElementById('btnScan').style.display = 'none';
+        document.getElementById('btnStop').style.display = 'block';
+        document.getElementById('progressContainer').style.display = 'block';
+        startPolling();
+    }
+    if (state.matches && state.matches.length > 0) {
+        document.getElementById('emptyState').style.display = 'none';
+        renderResults(state.matches);
+    }
+});
+</script>
+
+</body>
+</html>

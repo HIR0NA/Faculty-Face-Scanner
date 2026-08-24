@@ -1,0 +1,8 @@
+opencv-python
+numpy
+insightface
+requests
+beautifulsoup4
+flask
+lxml
+onnxruntime

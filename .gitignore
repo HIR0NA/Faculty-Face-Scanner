@@ -1,0 +1,47 @@
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ========== Virtual Environment ==========
+venv/
+env/
+.env/
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ========== OS ==========
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ========== Scan Results (ผลลัพธ์จะถูกสร้างใหม่ทุกครั้ง) ==========
+matched_results/*.jpg
+matched_results/*.png
+matched_results/*.jpeg
+scan_report.csv
+
+# ========== InsightFace Model Cache ==========
+models/
+*.onnx
+
+# ========== Teacher Samples (ความเป็นส่วนตัว) ==========
+teacher_samples/*.jpg
+teacher_samples/*.jpeg
+teacher_samples/*.png
+teacher_samples/*.webp
+teacher_samples/*.bmp
+teacher_samples/*.tiff
+
+# ========== Temp / Debug ==========
+_debug_*.py
+*.log
