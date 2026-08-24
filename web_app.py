@@ -50,6 +50,20 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
 
+
+def sanitize_folder_name(title: str) -> str:
+    """แปลง page title เป็นชื่อโฟลเดอร์ที่ใช้ได้บน Windows/Linux"""
+    if not title or title == "ไม่ระบุ":
+        return "ไม่ระบุกิจกรรม"
+    # ลบ characters ที่ใช้เป็นชื่อไฟล์/โฟลเดอร์ไม่ได้
+    name = re.sub(r'[<>:"/\\|?*]', '', title)
+    # ลบช่องว่างหัวท้าย และจุดท้าย (Windows ไม่ชอบ)
+    name = name.strip().rstrip('.')
+    # จำกัดความยาว (Windows max path component = 255)
+    if len(name) > 120:
+        name = name[:120].rstrip()
+    return name or "ไม่ระบุกิจกรรม"
+
 # ══════════════════════════════════════════════════════════════
 #  Global Scanner State
 # ══════════════════════════════════════════════════════════════
@@ -398,12 +412,6 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         url_hash = hashlib.md5(img_url.encode()).hexdigest()[:10]
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"match_{ts}_{url_hash}_f{fi}.jpg"
-                        
-                        # Save file (รองรับโฟลเดอร์ภาษาไทยบน Windows)
-                        is_success, buffer = cv2.imencode(".jpg", annotated)
-                        if is_success:
-                            with open(OUTPUT_DIR / filename, "wb") as f:
-                                f.write(buffer)
 
                         # Clean page title
                         page_title = img_info.get("page_title", "")
@@ -412,8 +420,24 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         if not page_title:
                             page_title = "ไม่ระบุ"
 
+                        # สร้างโฟลเดอร์ย่อยตามชื่องาน/กิจกรรม
+                        folder_name = sanitize_folder_name(page_title)
+                        event_dir = OUTPUT_DIR / folder_name
+                        event_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Save file (รองรับโฟลเดอร์ภาษาไทยบน Windows)
+                        is_success, buffer = cv2.imencode(".jpg", annotated)
+                        if is_success:
+                            with open(event_dir / filename, "wb") as f:
+                                f.write(buffer)
+
+                        # เก็บ relative path เป็น folder/filename
+                        rel_path = f"{folder_name}/{filename}"
+
                         match_record = {
                             "filename": filename,
+                            "folder": folder_name,
+                            "rel_path": rel_path,
                             "similarity": round(sim, 4),
                             "image_url": img_url,
                             "source_page": img_info.get("source_page", ""),
@@ -508,9 +532,14 @@ def api_sample_image(filename):
     return send_from_directory(str(SAMPLES_DIR), filename)
 
 
-@app.route("/api/results/image/<filename>")
-def api_result_image(filename):
-    """ส่งรูปผลลัพธ์"""
+@app.route("/api/results/image/<path:folder>/<filename>")
+def api_result_image(folder, filename):
+    """ส่งรูปผลลัพธ์ (รองรับโฟลเดอร์ย่อย)"""
+    return send_from_directory(str(OUTPUT_DIR / folder), filename)
+
+@app.route("/api/results/image_legacy/<filename>")
+def api_result_image_legacy(filename):
+    """ส่งรูปผลลัพธ์แบบเก่า (เผื่อมีรูปเก่าค้างในโฟลเดอร์หลัก)"""
     return send_from_directory(str(OUTPUT_DIR), filename)
 
 
@@ -531,9 +560,13 @@ def api_start_scan():
     det_size_val = int(data.get("det_size", 1280))
 
     # Clear old results
-    for f in OUTPUT_DIR.iterdir():
-        if f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-            f.unlink()
+    for item in OUTPUT_DIR.iterdir():
+        if item.name == ".gitkeep":
+            continue
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
 
     stop_event.clear()
     scanner_thread = threading.Thread(
@@ -564,9 +597,13 @@ def api_results():
 @app.route("/api/results/clear", methods=["POST"])
 def api_clear_results():
     """ล้างผลลัพธ์"""
-    for f in OUTPUT_DIR.iterdir():
-        if f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-            f.unlink()
+    for item in OUTPUT_DIR.iterdir():
+        if item.name == ".gitkeep":
+            continue
+        if item.is_file():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
     with scanner_lock:
         scanner_state["matches"] = []
         scanner_state["matches_found"] = 0

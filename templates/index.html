@@ -335,11 +335,38 @@
         .status-message.done { color: var(--green); border-color: rgba(0,255,136,0.3); }
 
         /* ── RESULTS GRID ── */
+        .results-container {
+            margin-top: 15px;
+        }
+        .result-group {
+            margin-bottom: 30px;
+            background: rgba(0,20,40,0.5);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .result-group-header {
+            background: rgba(0,40,80,0.8);
+            padding: 10px 15px;
+            font-size: 1.1em;
+            color: var(--cyan);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .result-group-header .count {
+            background: var(--cyan-dim);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            color: var(--text);
+        }
         .results-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 16px;
-            margin-top: 15px;
+            padding: 15px;
         }
         .result-card {
             background: rgba(0,15,30,0.8);
@@ -549,7 +576,7 @@
                     <div class="icon">🔍</div>
                     <p>ยังไม่มีผลลัพธ์ — เริ่มสแกนเพื่อค้นหาใบหน้า</p>
                 </div>
-                <div class="results-grid" id="resultsGrid"></div>
+                <div class="results-container" id="resultsContainer"></div>
             </div>
         </div>
     </div>
@@ -712,32 +739,75 @@ function updateStatus() {
 }
 
 function renderResults(matches) {
-    const grid = document.getElementById('resultsGrid');
-    // Only add new cards
-    const existing = grid.querySelectorAll('.result-card').length;
-    const sorted = [...matches].sort((a, b) => b.similarity - a.similarity);
+    const container = document.getElementById('resultsContainer');
+    
+    // Check if we need to re-render (only when matches count changes)
+    const existingCards = container.querySelectorAll('.result-card').length;
+    if (matches.length === existingCards) return;
 
-    if (sorted.length !== existing) {
-        grid.innerHTML = '';
-        sorted.forEach(m => {
+    container.innerHTML = '';
+    
+    // Group matches by folder (page_title)
+    const grouped = {};
+    matches.forEach(m => {
+        const groupName = m.folder || 'ไม่ระบุ';
+        if (!grouped[groupName]) {
+            grouped[groupName] = [];
+        }
+        grouped[groupName].push(m);
+    });
+
+    // Sort groups by number of matches (descending)
+    const sortedGroups = Object.entries(grouped).sort((a, b) => b[1].length - a[1].length);
+
+    sortedGroups.forEach(([groupName, groupMatches]) => {
+        // Sort matches within group by similarity
+        groupMatches.sort((a, b) => b.similarity - a.similarity);
+
+        const groupDiv = document.createElement('div');
+        groupDiv.className = 'result-group';
+        
+        // Use the first match's original page title for display
+        const displayTitle = groupMatches[0].page_title || groupName;
+        
+        const header = document.createElement('div');
+        header.className = 'result-group-header';
+        header.innerHTML = `
+            <span>📁 ${displayTitle}</span>
+            <span class="count">${groupMatches.length} รูป</span>
+        `;
+        groupDiv.appendChild(header);
+
+        const grid = document.createElement('div');
+        grid.className = 'results-grid';
+
+        groupMatches.forEach(m => {
             const simClass = m.similarity >= 0.60 ? 'high' : '';
             const simPct = (m.similarity * 100).toFixed(1);
+            
+            // ใช้ API ใหม่ถ้าระบบส่ง rel_path มา, ไม่งั้นใช้แบบเก่า
+            const imgSrc = m.rel_path 
+                ? `/api/results/image/${encodeURI(m.rel_path)}`
+                : `/api/results/image_legacy/${encodeURI(m.filename)}`;
+
             const card = document.createElement('div');
             card.className = 'result-card';
             card.innerHTML = `
-                <img src="/api/results/image/${m.filename}" alt="Match" loading="lazy">
+                <img src="${imgSrc}" alt="Match" loading="lazy">
                 <div class="result-info">
                     <div class="sim-score ${simClass}">${simPct}%</div>
-                    <div class="source-title">${m.page_title || 'ไม่ระบุกิจกรรม'}</div>
                     <div class="source-link">
-                        <a href="${m.source_page}" target="_blank">🔗 ดูหน้าต้นฉบับ</a>
+                        <a href="${m.source_page}" target="_blank">🔗 ดูหน้าเว็บกิจกรรมนี้</a>
                     </div>
                     <div class="timestamp">🕐 ${m.timestamp}</div>
                 </div>
             `;
             grid.appendChild(card);
         });
-    }
+
+        groupDiv.appendChild(grid);
+        container.appendChild(groupDiv);
+    });
 }
 
 // ── Init ──
