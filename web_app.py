@@ -40,6 +40,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # ══════════════════════════════════════════════════════════════
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 BASE_DIR = Path(__file__).parent
 SAMPLES_DIR = BASE_DIR / "teacher_samples"
@@ -48,21 +49,9 @@ REPORT_FILE = BASE_DIR / "scan_report.csv"
 SAMPLES_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+CACHE_DIR = BASE_DIR / ".embedding_cache"
+CACHE_DIR.mkdir(exist_ok=True)
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
-
-
-def sanitize_folder_name(title: str) -> str:
-    """แปลง page title เป็นชื่อโฟลเดอร์ที่ใช้ได้บน Windows/Linux"""
-    if not title or title == "ไม่ระบุ":
-        return "ไม่ระบุกิจกรรม"
-    # ลบ characters ที่ใช้เป็นชื่อไฟล์/โฟลเดอร์ไม่ได้
-    name = re.sub(r'[<>:"/\\|?*]', '', title)
-    # ลบช่องว่างหัวท้าย และจุดท้าย (Windows ไม่ชอบ)
-    name = name.strip().rstrip('.')
-    # จำกัดความยาว (Windows max path component = 255)
-    if len(name) > 120:
-        name = name[:120].rstrip()
-    return name or "ไม่ระบุกิจกรรม"
 
 # ══════════════════════════════════════════════════════════════
 #  Global Scanner State
@@ -113,6 +102,71 @@ def update_state(**kwargs):
 
 
 # ══════════════════════════════════════════════════════════════
+#  Embedding Cache & Dedup Helpers
+# ══════════════════════════════════════════════════════════════
+def _compute_samples_hash() -> str:
+    """SHA256 hash of sample filenames+sizes+mtimes for cache key."""
+    entries = []
+    for f in sorted(SAMPLES_DIR.iterdir()):
+        if f.is_file() and f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            st = f.stat()
+            entries.append(f"{f.name}|{st.st_size}|{int(st.st_mtime)}")
+    return hashlib.sha256("\n".join(entries).encode()).hexdigest()[:16]
+
+
+def _load_cached_profile() -> Optional[np.ndarray]:
+    h = _compute_samples_hash()
+    cache_file = CACHE_DIR / f"profile_{h}.npy"
+    if cache_file.exists():
+        try:
+            return np.load(str(cache_file))
+        except Exception:
+            return None
+    return None
+
+
+def _save_profile_cache(target: np.ndarray):
+    h = _compute_samples_hash()
+    cache_file = CACHE_DIR / f"profile_{h}.npy"
+    np.save(str(cache_file), target)
+
+
+def _normalize_image_url(url: str) -> str:
+    """Normalize URL to detect duplicate variants of the same image."""
+    parsed = urlparse(url)
+    path = parsed.path
+    # /thumbs/thumbs_IMG.jpg → /IMG.jpg
+    path = re.sub(r'/thumbs/thumbs_', '/', path)
+    # Numeric prefix: /1_IMG.jpg → /IMG.jpg
+    path = re.sub(r'/(\d+)_([A-Za-z])', r'/\2', path)
+    # Dimension suffix: IMG-150x150.jpg → IMG.jpg
+    path = re.sub(r'-\d+x\d+\.', '.', path)
+    return f"{parsed.netloc}{path}".lower()
+
+
+def deduplicate_matches(matches: list, threshold: float = 0.80) -> list:
+    """Remove duplicates: exact URL, thumbnail vs full-size, same-image multi-face."""
+    # Sort by similarity descending so we keep the best match
+    sorted_matches = sorted(matches, key=lambda m: m.get("similarity", 0), reverse=True)
+    seen_urls = set()
+    seen_normalized = set()
+    unique = []
+    for m in sorted_matches:
+        url = m.get("image_url", "")
+        # Exact URL duplicate
+        if url in seen_urls:
+            continue
+        # Thumbnail vs full-size duplicate
+        norm = _normalize_image_url(url)
+        if norm in seen_normalized:
+            continue
+        seen_urls.add(url)
+        seen_normalized.add(norm)
+        unique.append(m)
+    return unique
+
+
+# ══════════════════════════════════════════════════════════════
 #  Scanner Engine (runs in background thread)
 # ══════════════════════════════════════════════════════════════
 def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
@@ -149,7 +203,7 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
             update_state(status="idle", message="ถูกยกเลิก")
             return
 
-        # ── Build Target Profile ──
+        # ── Build Target Profile (with cache) ──
         update_state(status="building_profile", message="กำลังสร้าง Target Profile...")
         add_log("JARVIS: วิเคราะห์รูปตัวอย่าง...")
 
@@ -163,39 +217,42 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
             add_log(f"ERROR: ไม่พบรูปตัวอย่าง! path={SAMPLES_DIR.resolve()}")
             return
 
-        embeddings = []
-        for img_path in image_files:
-            try:
-                add_log(f"JARVIS: กำลังอ่าน {img_path.name}...")
-                
-                # อ่านไฟล์รองรับภาษาไทยใน Path
-                img_array = np.fromfile(str(img_path), np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-                
-                if img is None:
-                    add_log(f"WARNING: โหลดรูปภาพล้มเหลว: {img_path.name}")
+        cached = _load_cached_profile()
+        if cached is not None:
+            target = cached
+            add_log(f"JARVIS: โหลด Target Profile จาก Cache ({len(image_files)} รูป)")
+        else:
+            embeddings = []
+            for img_path in image_files:
+                try:
+                    add_log(f"JARVIS: กำลังอ่าน {img_path.name}...")
+                    img_array = np.fromfile(str(img_path), np.uint8)
+                    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                    if img is None:
+                        add_log(f"WARNING: โหลดรูปภาพล้มเหลว: {img_path.name}")
+                        continue
+                    add_log(f"JARVIS: {img_path.name} — size={img.shape[1]}x{img.shape[0]}")
+                    faces = face_app.get(img)
+                    add_log(f"JARVIS: {img_path.name} — พบ {len(faces)} ใบหน้า")
+                    if not faces:
+                        add_log(f"WARNING: ตรวจจับใบหน้าไม่ได้ใน {img_path.name}")
+                        continue
+                    largest = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
+                    embeddings.append(largest.normed_embedding)
+                    add_log(f"JARVIS: {img_path.name} — score={largest.det_score:.3f}")
+                except Exception as e:
+                    add_log(f"ERROR: ประมวลผล {img_path.name} ล้มเหลว: {str(e)[:80]}")
+                    import traceback; traceback.print_exc()
                     continue
-                add_log(f"JARVIS: {img_path.name} — size={img.shape[1]}x{img.shape[0]}")
-                faces = face_app.get(img)
-                add_log(f"JARVIS: {img_path.name} — พบ {len(faces)} ใบหน้า")
-                if not faces:
-                    add_log(f"WARNING: ตรวจจับใบหน้าไม่ได้ใน {img_path.name}")
-                    continue
-                largest = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
-                embeddings.append(largest.normed_embedding)
-                add_log(f"JARVIS: {img_path.name} — score={largest.det_score:.3f} ✓")
-            except Exception as e:
-                add_log(f"ERROR: ประมวลผล {img_path.name} ล้มเหลว: {str(e)[:80]}")
-                import traceback; traceback.print_exc()
-                continue
 
-        if not embeddings:
-            update_state(status="error", message="ไม่สามารถสร้าง Target Profile ได้")
-            return
+            if not embeddings:
+                update_state(status="error", message="ไม่สามารถสร้าง Target Profile ได้")
+                return
 
-        mean_emb = np.mean(embeddings, axis=0)
-        target = mean_emb / np.linalg.norm(mean_emb)
-        add_log(f"JARVIS: Target Profile สร้างเสร็จ ({len(embeddings)} รูป)")
+            mean_emb = np.mean(embeddings, axis=0)
+            target = mean_emb / np.linalg.norm(mean_emb)
+            _save_profile_cache(target)
+            add_log(f"JARVIS: Target Profile สร้างเสร็จ + บันทึก Cache ({len(embeddings)} รูป)")
 
         if stop_event.is_set():
             update_state(status="idle", message="ถูกยกเลิก")
@@ -213,6 +270,30 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
 
         visited = set()
         image_urls = {}  # img_url -> {"source_page": url, "page_title": title}
+        image_norms = {}  # normalized_url -> original_url (for thumb dedup)
+
+        def _add_image(abs_url, source_page, page_title):
+            """Add image URL if not a duplicate (exact or thumb/full-size)."""
+            if abs_url in image_urls:
+                return False
+            norm = _normalize_image_url(abs_url)
+            if norm in image_norms:
+                existing = image_norms[norm]
+                # Keep full-size over thumbnail
+                is_thumb = '/thumbs/' in abs_url.lower()
+                existing_is_thumb = '/thumbs/' in existing.lower()
+                if is_thumb and not existing_is_thumb:
+                    return False  # skip thumbnail, full-size already exists
+                if not is_thumb and existing_is_thumb:
+                    # Replace thumbnail with full-size
+                    del image_urls[existing]
+                    image_norms[norm] = abs_url
+                    image_urls[abs_url] = {"source_page": source_page, "page_title": page_title}
+                    return True
+                return False  # both same type, skip
+            image_norms[norm] = abs_url
+            image_urls[abs_url] = {"source_page": source_page, "page_title": page_title}
+            return True
 
         def crawl(url, depth=0):
             if stop_event.is_set():
@@ -249,11 +330,7 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         abs_url = urljoin(url, raw.strip())
                         p = urlparse(abs_url).path.lower()
                         if any(p.endswith(e) for e in SUPPORTED_IMAGE_EXTENSIONS):
-                            if abs_url not in image_urls:
-                                image_urls[abs_url] = {
-                                    "source_page": url,
-                                    "page_title": page_title,
-                                }
+                            if _add_image(abs_url, url, page_title):
                                 new_count += 1
                 srcset = img_tag.get("srcset", "")
                 if srcset:
@@ -263,16 +340,35 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                             abs_url = urljoin(url, parts[0].strip())
                             p = urlparse(abs_url).path.lower()
                             if any(p.endswith(e) for e in SUPPORTED_IMAGE_EXTENSIONS):
-                                if abs_url not in image_urls:
-                                    image_urls[abs_url] = {
-                                        "source_page": url,
-                                        "page_title": page_title,
-                                    }
+                                if _add_image(abs_url, url, page_title):
                                     new_count += 1
 
             update_state(pages_crawled=len(visited), images_found=len(image_urls))
             add_log(f"CRAWL [d={depth}] {url[:60]}... +{new_count} imgs (total: {len(image_urls)})")
             time.sleep(0.3)
+
+            # Follow pagination links at the same depth
+            pagination_links = set()
+            for a in soup.find_all("a", href=True):
+                href = a["href"].strip()
+                if not href or href.startswith("#"):
+                    continue
+                text = a.get_text(strip=True).lower()
+                classes = " ".join(a.get("class", []))
+                parent_classes = " ".join(a.parent.get("class", [])) if a.parent else ""
+                is_page = any(k in text for k in ("next", "ถัดไป", "»", "›", ">>")) or \
+                    any(k in classes for k in ("page", "pagi", "next")) or \
+                    any(k in parent_classes for k in ("page", "pagi")) or \
+                    re.match(r'^\d+$', text)
+                if is_page:
+                    abs_link = urljoin(url, href)
+                    if urlparse(abs_link).netloc == allowed_domain:
+                        pagination_links.add(abs_link)
+
+            for plink in sorted(pagination_links):
+                if stop_event.is_set():
+                    return
+                crawl(plink, depth)  # same depth for pagination
 
             # Follow links
             if depth < max_depth:
@@ -380,7 +476,7 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         bx2 = min(w, x2 + pad)
                         by2 = min(h, y2 + pad)
 
-                        color = (0, 255, 200)  # cyan-green
+                        color = (255, 0, 213)  # neon purple
                         cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 2)
 
                         # มุม HUD
@@ -412,18 +508,21 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         url_hash = hashlib.md5(img_url.encode()).hexdigest()[:10]
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         filename = f"match_{ts}_{url_hash}_f{fi}.jpg"
-
+                        
                         # Clean page title
                         page_title = img_info.get("page_title", "")
-                        # Remove site name suffix
                         page_title = re.sub(r'\s*[-–|]\s*มหาวิทยาลัย.*$', '', page_title).strip()
                         if not page_title:
                             page_title = "ไม่ระบุ"
-
-                        # สร้างโฟลเดอร์ย่อยตามชื่องาน/กิจกรรม
-                        folder_name = sanitize_folder_name(page_title)
-                        event_dir = OUTPUT_DIR / folder_name
-                        event_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Create safe folder name
+                        safe_folder = re.sub(r'[\\/*?:"<>|]', "", page_title).strip()
+                        if not safe_folder: safe_folder = "unknown"
+                        
+                        event_dir = OUTPUT_DIR / safe_folder
+                        event_dir.mkdir(exist_ok=True)
+                        
+                        rel_path = f"{safe_folder}/{filename}"
 
                         # Save file (รองรับโฟลเดอร์ภาษาไทยบน Windows)
                         is_success, buffer = cv2.imencode(".jpg", annotated)
@@ -431,13 +530,8 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                             with open(event_dir / filename, "wb") as f:
                                 f.write(buffer)
 
-                        # เก็บ relative path เป็น folder/filename
-                        rel_path = f"{folder_name}/{filename}"
-
                         match_record = {
-                            "filename": filename,
-                            "folder": folder_name,
-                            "rel_path": rel_path,
+                            "filename": rel_path,
                             "similarity": round(sim, 4),
                             "image_url": img_url,
                             "source_page": img_info.get("source_page", ""),
@@ -453,6 +547,15 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
 
                 if processed % 50 == 0:
                     add_log(f"SCAN: {processed}/{len(image_urls)} | faces={scanner_state['faces_detected']} | match={scanner_state['matches_found']}")
+
+        # ── Deduplicate ──
+        with scanner_lock:
+            before = len(scanner_state["matches"])
+            scanner_state["matches"] = deduplicate_matches(scanner_state["matches"])
+            after = len(scanner_state["matches"])
+            scanner_state["matches_found"] = after
+        if before > after:
+            add_log(f"JARVIS: ลบรูปซ้ำ {before - after} รูป (เหลือ {after})")
 
         # ── Export CSV ──
         if scanner_state["matches"]:
@@ -532,14 +635,9 @@ def api_sample_image(filename):
     return send_from_directory(str(SAMPLES_DIR), filename)
 
 
-@app.route("/api/results/image/<path:folder>/<filename>")
-def api_result_image(folder, filename):
-    """ส่งรูปผลลัพธ์ (รองรับโฟลเดอร์ย่อย)"""
-    return send_from_directory(str(OUTPUT_DIR / folder), filename)
-
-@app.route("/api/results/image_legacy/<filename>")
-def api_result_image_legacy(filename):
-    """ส่งรูปผลลัพธ์แบบเก่า (เผื่อมีรูปเก่าค้างในโฟลเดอร์หลัก)"""
+@app.route("/api/results/image/<path:filename>")
+def api_result_image(filename):
+    """ส่งรูปผลลัพธ์"""
     return send_from_directory(str(OUTPUT_DIR), filename)
 
 
@@ -560,13 +658,9 @@ def api_start_scan():
     det_size_val = int(data.get("det_size", 1280))
 
     # Clear old results
-    for item in OUTPUT_DIR.iterdir():
-        if item.name == ".gitkeep":
-            continue
-        if item.is_file():
-            item.unlink()
-        elif item.is_dir():
-            shutil.rmtree(item)
+    for f in OUTPUT_DIR.iterdir():
+        if f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            f.unlink()
 
     stop_event.clear()
     scanner_thread = threading.Thread(
@@ -594,16 +688,41 @@ def api_results():
     return jsonify({"matches": matches, "total": len(matches)})
 
 
+@app.route("/api/results/load-csv", methods=["POST"])
+def api_load_csv():
+    """โหลดผลลัพธ์จาก scan_report.csv กลับเข้า state"""
+    if not REPORT_FILE.exists():
+        return jsonify({"error": "ไม่พบ scan_report.csv"}), 404
+    matches = []
+    with open(REPORT_FILE, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            matches.append({
+                "filename": row.get("Filename", ""),
+                "similarity": round(float(row.get("Similarity", 0)), 4),
+                "image_url": row.get("Image_URL", ""),
+                "source_page": row.get("Source_Page", ""),
+                "page_title": row.get("Page_Title", ""),
+                "timestamp": row.get("Timestamp", ""),
+            })
+    before = len(matches)
+    matches = deduplicate_matches(matches)
+    after = len(matches)
+    with scanner_lock:
+        scanner_state["matches"] = matches
+        scanner_state["matches_found"] = after
+        scanner_state["status"] = "done"
+        scanner_state["message"] = f"โหลดจาก CSV — {after} รูป (ลบซ้ำ {before - after})"
+    return jsonify({"loaded": after, "removed_duplicates": before - after})
+
+
 @app.route("/api/results/clear", methods=["POST"])
 def api_clear_results():
     """ล้างผลลัพธ์"""
-    for item in OUTPUT_DIR.iterdir():
-        if item.name == ".gitkeep":
-            continue
-        if item.is_file():
-            item.unlink()
-        elif item.is_dir():
-            shutil.rmtree(item)
+    for f in OUTPUT_DIR.iterdir():
+        if f.is_file():
+            f.unlink()
+        elif f.is_dir():
+            shutil.rmtree(f)
     with scanner_lock:
         scanner_state["matches"] = []
         scanner_state["matches_found"] = 0
@@ -620,4 +739,4 @@ if __name__ == "__main__":
     print("   Open browser: http://localhost:5000")
     print("=" * 56)
     print()
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True, use_reloader=False)

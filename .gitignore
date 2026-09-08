@@ -25,23 +25,25 @@ Thumbs.db
 desktop.ini
 
 # ========== Scan Results (ผลลัพธ์จะถูกสร้างใหม่ทุกครั้ง) ==========
-matched_results/*.jpg
-matched_results/*.png
-matched_results/*.jpeg
+matched_results/*
+!matched_results/.gitkeep
 scan_report.csv
+scan_gallery.html
+.embedding_cache/
 
 # ========== InsightFace Model Cache ==========
 models/
 *.onnx
 
 # ========== Teacher Samples (ความเป็นส่วนตัว) ==========
-teacher_samples/*.jpg
-teacher_samples/*.jpeg
-teacher_samples/*.png
-teacher_samples/*.webp
-teacher_samples/*.bmp
-teacher_samples/*.tiff
+teacher_samples/*
+!teacher_samples/.gitkeep
 
 # ========== Temp / Debug ==========
 _debug_*.py
 *.log
+
+# ========== Assistant & IDE ==========
+.claude/
+.serena/
+

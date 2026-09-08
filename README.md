@@ -1,21 +1,8 @@
-# 🔍 J.A.R.V.I.S. — Faculty Face Scanner
+# 🔍 Faculty Face Scanner
 
 **ระบบค้นหาใบหน้าอาจารย์อัตโนมัติจากเว็บไซต์มหาวิทยาลัย**
 
 ใช้เทคโนโลยี Deep Metric Learning (InsightFace ArcFace) บน NVIDIA GPU เพื่อ crawl เว็บไซต์, ตรวจจับใบหน้าจากรูปภาพทุกรูป (รวมถึงรูปหมู่), แล้วเทียบกับใบหน้าเป้าหมายที่กำหนดไว้
-
-พร้อม **Web UI** สไตล์ Iron Man HUD สำหรับควบคุมและดูผลลัพธ์แบบ Real-time
-
----
-
-## ✨ Features
-
-- 🤖 **AI Face Recognition** — ใช้ InsightFace (SCRFD + ArcFace) ตรวจจับและจดจำใบหน้า 512 มิติ
-- 🌐 **Smart Web Crawler** — Crawl เว็บไซต์ตาม depth ที่กำหนด พร้อม rate limiting ป้องกันโดนบล็อก
-- 🖥️ **Web UI (JARVIS HUD)** — หน้าเว็บสไตล์ Iron Man สำหรับตั้งค่า สแกน และดูผลลัพธ์แบบ real-time
-- ⚡ **GPU Accelerated** — ใช้ NVIDIA CUDA เร่งความเร็วการประมวลผล
-- 📊 **Export CSV** — ส่งออกผลลัพธ์เป็นไฟล์ CSV พร้อมลิงก์ต้นทาง
-- 🖼️ **Matched Gallery** — แสดงรูปที่ match พร้อม bounding box และคะแนนความคล้าย
 
 ---
 
@@ -41,24 +28,16 @@ nvcc --version
 
 ---
 
-## 🚀 วิธีติดตั้ง (Quick Start)
+## 🚀 วิธีติดตั้ง
 
-### 1. Clone โปรเจค
-
-```bash
-git clone https://github.com/HIR0NA/Faculty-Face-Scanner.git
-cd Faculty-Face-Scanner
-```
-
-### 2. สร้าง Virtual Environment (แนะนำ)
+### 1. สร้าง Virtual Environment (แนะนำ)
 
 ```bash
 python -m venv venv
 venv\Scripts\activate    # Windows
-# source venv/bin/activate  # macOS/Linux
 ```
 
-### 3. ถอน onnxruntime ตัวเก่า (ถ้ามี)
+### 2. ถอน onnxruntime ตัวเก่า (ถ้ามี)
 
 **สำคัญมาก:** ถ้ามี `onnxruntime` (CPU) ติดตั้งอยู่ ต้องถอนออกก่อน ไม่งั้น GPU จะไม่ทำงาน
 
@@ -66,13 +45,13 @@ venv\Scripts\activate    # Windows
 pip uninstall onnxruntime onnxruntime-gpu -y
 ```
 
-### 4. ติดตั้ง Dependencies
+### 3. ติดตั้ง Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 5. ตรวจสอบ CUDA Provider
+### 4. ตรวจสอบ CUDA Provider
 
 ```bash
 python -c "import onnxruntime as ort; print(ort.get_available_providers())"
@@ -97,25 +76,18 @@ python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 
 **นามสกุลที่รองรับ:** `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.tiff`
 
-### ขั้นตอนที่ 2 — เปิด Web UI
+### ขั้นตอนที่ 2 — ตั้งค่า URL เป้าหมาย
 
-```bash
-python web_app.py
+เปิดไฟล์ `faculty_scanner.py` แล้วแก้ค่าตรงส่วนบน:
+
+```python
+START_URL      = "https://www.sdu.ac.th"    # URL เริ่มต้น
+ALLOWED_DOMAIN = "www.sdu.ac.th"            # จำกัด domain
+MAX_CRAWL_DEPTH = 2                         # ความลึก (0=หน้าเดียว, 2=3 ชั้น)
+SIMILARITY_THRESHOLD = 0.55                 # เกณฑ์ความคล้าย (0.0-1.0)
 ```
 
-เปิดเบราว์เซอร์ไปที่ **http://localhost:5000**
-
-### ขั้นตอนที่ 3 — ตั้งค่าและสแกน
-
-บน Web UI คุณสามารถ:
-
-1. **TARGET URI** — ใส่ URL ของเว็บไซต์เป้าหมาย
-2. **CRAWL DEPTH** — ตั้งความลึกของการ crawl (0 = หน้าเดียว, 3 = 4 ชั้น)
-3. **SIMILARITY THRESHOLD** — ตั้งเกณฑ์ความคล้าย (0.0-1.0)
-4. **DETECTION SIZE** — ขนาด input ของ face detector
-5. กด **▶ INITIATE SCAN** เพื่อเริ่มสแกน
-
-### (ทางเลือก) รัน CLI โดยตรง
+### ขั้นตอนที่ 3 — รัน!
 
 ```bash
 python faculty_scanner.py
@@ -126,31 +98,22 @@ python faculty_scanner.py
 ## 📁 โครงสร้างไฟล์
 
 ```
-Faculty-Face-Scanner/
-├── web_app.py              ← Web UI (Flask) — JARVIS HUD
-├── faculty_scanner.py      ← Core engine (crawler + face recognition)
+Faculty Face Scanner/
+├── faculty_scanner.py      ← สคริปต์หลัก
 ├── requirements.txt        ← รายการ dependencies
 ├── README.md               ← คู่มือ (ไฟล์นี้)
-├── .gitignore              ← ไฟล์ที่ไม่ต้องอัพ git
-├── templates/
-│   └── index.html          ← หน้าเว็บ JARVIS HUD
 ├── teacher_samples/        ← ใส่รูปอาจารย์ตัวอย่างที่นี่
-│   ├── .gitkeep
-│   └── (ใส่รูปของคุณที่นี่)
-└── matched_results/        ← ผลลัพธ์ (สร้างอัตโนมัติ)
-    └── .gitkeep
+│   ├── photo1.jpg
+│   └── photo2.jpg
+├── matched_results/        ← ผลลัพธ์ (รูปที่ match + bounding box)
+│   ├── match_20260823_1430_abc123_face0.jpg
+│   └── ...
+└── scan_report.csv         ← รายงาน CSV (สร้างอัตโนมัติ)
 ```
 
 ---
 
 ## 📊 ผลลัพธ์
-
-### Web UI Dashboard
-หน้า Web UI จะแสดงผลลัพธ์แบบ real-time:
-- **PAGES** — จำนวนหน้าเว็บที่ crawl แล้ว
-- **IMAGES** — จำนวนรูปที่ดาวน์โหลดแล้ว
-- **FACES** — จำนวนใบหน้าที่ตรวจจับได้
-- **MATCHES** — จำนวนรูปที่ match กับเป้าหมาย
 
 ### matched_results/
 รูปภาพที่ตรวจจับว่าตรงกับอาจารย์ — มี **กรอบสีเขียว** รอบใบหน้าที่ match พร้อมคะแนนความคล้าย
@@ -172,10 +135,15 @@ Faculty-Face-Scanner/
 
 | ค่า | ค่าเริ่มต้น | คำอธิบาย |
 |---|---|---|
-| `TARGET URI` | — | URL เริ่มต้นของ crawler |
-| `CRAWL DEPTH` | `3` | ความลึกของการ crawl (0 = หน้าเดียว) |
-| `SIMILARITY THRESHOLD` | `0.40` | เกณฑ์ความคล้ายขั้นต่ำ |
-| `DETECTION SIZE` | `1280` | ขนาด input ของ face detector |
+| `START_URL` | `https://www.sdu.ac.th` | URL เริ่มต้นของ crawler |
+| `ALLOWED_DOMAIN` | `www.sdu.ac.th` | จำกัดให้ crawl เฉพาะ domain นี้ |
+| `MAX_CRAWL_DEPTH` | `2` | ความลึกของการ crawl (0 = หน้าเดียว) |
+| `CRAWL_DELAY` | `0.5` | หน่วงระหว่างดึงแต่ละหน้า (วินาที) |
+| `SIMILARITY_THRESHOLD` | `0.55` | เกณฑ์ความคล้ายขั้นต่ำ |
+| `MAX_WORKERS` | `16` | จำนวน thread สำหรับดาวน์โหลด |
+| `DET_SIZE` | `(1280, 1280)` | ขนาด input ของ face detector |
+| `REQUEST_TIMEOUT` | `15` | timeout สำหรับ HTTP request (วินาที) |
+| `MIN_IMAGE_SIZE` | `50` | ขนาดรูปต่ำสุด (พิกเซล) |
 
 ### แนะนำค่า Threshold
 
@@ -217,15 +185,15 @@ Faculty-Face-Scanner/
 
 ### ❌ "ไม่พบ match เลย"
 
-- ลด `SIMILARITY THRESHOLD` ลง (เช่น 0.45)
+- ลด `SIMILARITY_THRESHOLD` ลง (เช่น 0.45)
 - เพิ่มรูปตัวอย่างจากหลายมุม
 - ตรวจว่า URL เป้าหมายมีรูปอาจารย์จริงๆ
 
 ### ❌ โปรแกรมช้ามาก
 
 - ตรวจว่าใช้ GPU จริง (ดู log ว่ามี CUDAExecutionProvider)
-- ลด `DETECTION SIZE` เป็น `960` หรือ `640`
-- ลด `CRAWL DEPTH`
+- ลด `DET_SIZE` เป็น `(960, 960)` หรือ `(640, 640)`
+- ลด `MAX_CRAWL_DEPTH` เป็น 1
 
 ### ❌ "NumPy _ARRAY_API not found"
 
@@ -263,25 +231,13 @@ pip install "numpy>=1.24.0,<2.0.0"
          │
          ▼
 ┌──────────────────┐
-│  Phase 4         │ Cosine Similarity >= threshold
+│  Phase 4         │ Cosine Similarity >= 0.55
 │  Match & Output  │ → matched_results/ + scan_report.csv
 └──────────────────┘
 ```
 
 ---
 
-## 🛠️ Tech Stack
-
-- **Python 3.10+**
-- **InsightFace** (SCRFD face detection + ArcFace embedding)
-- **ONNX Runtime GPU** (CUDA acceleration)
-- **Flask** (Web UI server)
-- **BeautifulSoup4** (HTML parsing / web crawling)
-- **OpenCV** (Image processing)
-- **NumPy** (Numerical computing)
-
----
-
 ## 📜 License
 
-MIT License — สร้างสำหรับงานวิจัย/การศึกษา กรุณาเคารพ robots.txt และข้อกำหนดการใช้งานของเว็บไซต์เป้าหมาย
+สร้างสำหรับใช้งานภายในเท่านั้น — กรุณาเคารพ robots.txt และข้อกำหนดการใช้งานของเว็บไซต์เป้าหมาย
