@@ -846,6 +846,9 @@ function startScan() {
         document.getElementById('resultsGrid').innerHTML = '';
         document.getElementById('emptyState').style.display = 'none';
         lastLogCount = 0;
+        lastRenderedMatchCount = 0;
+        userExpandedActivities.clear();
+        allExpanded = false;
         startPolling();
     }).catch(err => {
         alert('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err);
@@ -911,7 +914,10 @@ function updateStatus() {
             if (state.matches && state.matches.length > 0) {
                 document.getElementById('emptyState').style.display = 'none';
                 document.getElementById('matchCount').textContent = `${state.matches.length} found`;
-                renderResults(state.matches);
+                if (state.matches.length !== lastRenderedMatchCount) {
+                    lastRenderedMatchCount = state.matches.length;
+                    renderResults(state.matches);
+                }
             }
 
             if (state.status === 'done' || state.status === 'error' || state.status === 'idle') {
@@ -925,6 +931,19 @@ function updateStatus() {
 
 let currentFilter = 'all';
 let allMatches = [];
+let lastRenderedMatchCount = -1;
+const userExpandedActivities = new Set();
+
+function toggleActivity(headerEl) {
+    const section = headerEl.parentElement;
+    const title = section.getAttribute('data-activity');
+    const isCollapsed = section.classList.toggle('collapsed');
+    if (!isCollapsed) {
+        userExpandedActivities.add(title);
+    } else {
+        userExpandedActivities.delete(title);
+    }
+}
 
 function getFilteredMatches() {
     let filtered = allMatches;
@@ -946,6 +965,12 @@ function getFilteredMatches() {
 function renderResults(matches) {
     if (matches) allMatches = matches;
     const grid = document.getElementById('resultsGrid');
+
+    // เก็บสถานะว่าก่อน re-render โฟลเดอร์กิจกรรมไหนถูกเปิดดูอยู่บ้าง
+    document.querySelectorAll('.activity-section:not(.collapsed)').forEach(el => {
+        const act = el.getAttribute('data-activity');
+        if (act) userExpandedActivities.add(act);
+    });
 
     const high = allMatches.filter(m => m.similarity >= 0.55).length;
     const med = allMatches.filter(m => m.similarity >= 0.45 && m.similarity < 0.55).length;
@@ -981,14 +1006,15 @@ function renderResults(matches) {
         const avg = groupMatches.reduce((s, m) => s + m.similarity, 0) / groupMatches.length;
 
         const section = document.createElement('div');
-        // เริ่มต้นแบบพับเก็บไว้ เป็นหัวข้อกิจกรรม ให้กดเข้าไปดูรูปข้างในได้ตามต้องการ
-        section.className = 'activity-section collapsed';
+        // คงสถานะเปิด/ปิดโฟลเดอร์ไว้ตามที่ผู้ใช้เคยคลิกไว้ ไม่พับเก็บเองอัตโนมัติ
+        const isExpanded = allExpanded || userExpandedActivities.has(title);
+        section.className = 'activity-section' + (isExpanded ? '' : ' collapsed');
         section.setAttribute('data-activity', title);
 
         const bestColor = best >= 0.55 ? 'var(--green)' : best >= 0.45 ? 'var(--orange)' : 'var(--red)';
 
         section.innerHTML = `
-            <div class="activity-header" onclick="this.parentElement.classList.toggle('collapsed')" title="คลิกเพื่อเปิด/ปิดดูรูปภาพในกิจกรรมนี้">
+            <div class="activity-header" onclick="toggleActivity(this)" title="คลิกเพื่อเปิด/ปิดดูรูปภาพในกิจกรรมนี้">
                 <div class="activity-icon">&#128194;</div>
                 <div class="activity-name">
                     ${escHtml(title)}
@@ -1025,6 +1051,14 @@ function renderResults(matches) {
 let allExpanded = false;
 function toggleAllActivities() {
     allExpanded = !allExpanded;
+    if (!allExpanded) {
+        userExpandedActivities.clear();
+    } else {
+        document.querySelectorAll('.activity-section').forEach(sec => {
+            const act = sec.getAttribute('data-activity');
+            if (act) userExpandedActivities.add(act);
+        });
+    }
     document.querySelectorAll('.activity-section').forEach(sec => {
         if (allExpanded) {
             sec.classList.remove('collapsed');
