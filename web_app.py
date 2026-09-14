@@ -186,12 +186,25 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
         # ── Load InsightFace ──
         try:
             from insightface.app import FaceAnalysis
+            import onnxruntime as ort
+
+            available = ort.get_available_providers()
+            if "CUDAExecutionProvider" in available:
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                ctx_id = 0
+                add_log("JARVIS: ตรวจพบ GPU (CUDA พร้อมใช้งาน)")
+            else:
+                providers = ["CPUExecutionProvider"]
+                ctx_id = -1
+                add_log("JARVIS: ไม่พบ CUDA GPU — ใช้โหมด CPU แทน")
+
             face_app = FaceAnalysis(
                 name="buffalo_l",
                 allowed_modules=["detection", "recognition"],
+                providers=providers,
             )
-            face_app.prepare(ctx_id=0, det_size=(det_size, det_size), det_thresh=0.5)
-            add_log(f"JARVIS: โมเดลพร้อมใช้งาน (det_size={det_size})")
+            face_app.prepare(ctx_id=ctx_id, det_size=(det_size, det_size), det_thresh=0.5)
+            add_log(f"JARVIS: โมเดลพร้อมใช้งาน (โหมด {'GPU' if ctx_id == 0 else 'CPU'}, det_size={det_size})")
         except Exception as e:
             err_msg = f"โหลดโมเดลไม่ได้: {str(e)[:100]}"
             update_state(status="error", message=err_msg)
