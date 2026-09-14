@@ -542,11 +542,19 @@
             background: rgba(201,168,76,0.15);
             color: var(--gold);
             font-family: 'Special Elite', monospace;
-            font-size: 0.65em;
+            font-size: 0.72em;
             padding: 2px 8px;
-            border-radius: 3px;
-            margin-left: 6px;
+            border-radius: 10px;
+            margin-left: 8px;
             vertical-align: middle;
+            border: 1px solid rgba(201,168,76,0.3);
+        }
+        .activity-hint {
+            font-size: 0.72em;
+            color: var(--text-dim);
+            margin-left: 6px;
+            font-weight: normal;
+            opacity: 0.8;
         }
 
         /* ── EMPTY STATE ── */
@@ -727,7 +735,7 @@
         <!-- Results Panel -->
         <div class="panel" style="margin-top:16px">
             <div class="panel-title">
-                Case Matches
+                Case Matches (รูปถ่ายที่คัดกรองพบบุคคลเป้าหมาย)
                 <span id="matchCount" style="float:right; color: var(--green)"></span>
             </div>
 
@@ -741,8 +749,9 @@
 
             <div class="search-export-row" id="searchRow" style="display:none">
                 <div class="search-wrap">
-                    <input type="text" class="search-box" id="searchBox" placeholder="Search by page title or URL..." oninput="applyFilters()">
+                    <input type="text" class="search-box" id="searchBox" placeholder="ค้นหาตามชื่อกิจกรรม หรือ URL..." oninput="applyFilters()">
                 </div>
+                <button class="btn-export" id="btnToggleAll" onclick="toggleAllActivities()" title="คลิกเพื่อขยายหรือพับทุกกิจกรรม">📂 ขยายทั้งหมด</button>
                 <button class="btn-export" onclick="exportFiltered()">&#128230; Export CSV</button>
             </div>
 
@@ -825,7 +834,12 @@ function startScan() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
-    }).then(r => r.json()).then(() => {
+    }).then(async r => {
+        const data = await r.json();
+        if (!r.ok || data.error) {
+            alert(data.error || 'ไม่สามารถเริ่มสแกนได้ กรุณาลองใหม่อีกครั้ง');
+            return;
+        }
         document.getElementById('btnScan').style.display = 'none';
         document.getElementById('btnStop').style.display = 'block';
         document.getElementById('progressContainer').style.display = 'block';
@@ -833,6 +847,8 @@ function startScan() {
         document.getElementById('emptyState').style.display = 'none';
         lastLogCount = 0;
         startPolling();
+    }).catch(err => {
+        alert('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err);
     });
 }
 
@@ -959,21 +975,26 @@ function renderResults(matches) {
 
     const sortedGroups = Object.entries(grouped).sort((a, b) => b[1].length - a[1].length);
 
-    sortedGroups.forEach(([title, groupMatches]) => {
+    sortedGroups.forEach(([title, groupMatches], index) => {
         groupMatches.sort((a, b) => b.similarity - a.similarity);
         const best = groupMatches[0].similarity;
         const avg = groupMatches.reduce((s, m) => s + m.similarity, 0) / groupMatches.length;
 
         const section = document.createElement('div');
-        section.className = 'activity-section';
+        // เริ่มต้นแบบพับเก็บไว้ เป็นหัวข้อกิจกรรม ให้กดเข้าไปดูรูปข้างในได้ตามต้องการ
+        section.className = 'activity-section collapsed';
         section.setAttribute('data-activity', title);
 
         const bestColor = best >= 0.55 ? 'var(--green)' : best >= 0.45 ? 'var(--orange)' : 'var(--red)';
 
         section.innerHTML = `
-            <div class="activity-header" onclick="this.parentElement.classList.toggle('collapsed')">
+            <div class="activity-header" onclick="this.parentElement.classList.toggle('collapsed')" title="คลิกเพื่อเปิด/ปิดดูรูปภาพในกิจกรรมนี้">
                 <div class="activity-icon">&#128194;</div>
-                <div class="activity-name">${escHtml(title)}<span class="activity-badge">${groupMatches.length}</span></div>
+                <div class="activity-name">
+                    ${escHtml(title)}
+                    <span class="activity-badge">${groupMatches.length} รูปเป้าหมาย</span>
+                    <span class="activity-hint">(คลิกดูรูป)</span>
+                </div>
                 <div class="activity-stats">best <span style="color:${bestColor}">${(best*100).toFixed(1)}%</span> &middot; avg ${(avg*100).toFixed(1)}%</div>
                 <div class="activity-chevron">&#9660;</div>
             </div>
@@ -984,12 +1005,12 @@ function renderResults(matches) {
                     return `
                     <div class="result-card" data-sim="${m.similarity}">
                         <img src="/api/results/image/${encodeURI(m.filename)}" alt="Match" loading="lazy"
-                             onclick="openLightbox(this.src)" style="cursor:pointer">
+                             onclick="openLightbox(this.src)" style="cursor:pointer" title="คลิกเพื่อดูรูปขนาดเต็ม">
                         <div class="result-info">
                             <div class="sim-score" style="color:${simColor}">${simPct}%</div>
                             <div class="source-title">${escHtml(title.substring(0, 80))}</div>
                             <div class="source-link">
-                                <a href="${m.source_page}" target="_blank" rel="noopener">&#128279; View Source</a>
+                                <a href="${m.source_page}" target="_blank" rel="noopener">&#128279; ดูหน้าต้นฉบับ</a>
                             </div>
                             <div class="timestamp">&#128336; ${m.timestamp}</div>
                         </div>
@@ -999,6 +1020,20 @@ function renderResults(matches) {
         `;
         grid.appendChild(section);
     });
+}
+
+let allExpanded = false;
+function toggleAllActivities() {
+    allExpanded = !allExpanded;
+    document.querySelectorAll('.activity-section').forEach(sec => {
+        if (allExpanded) {
+            sec.classList.remove('collapsed');
+        } else {
+            sec.classList.add('collapsed');
+        }
+    });
+    const btn = document.getElementById('btnToggleAll');
+    if (btn) btn.innerHTML = allExpanded ? '📁 พับเก็บทั้งหมด' : '📂 ขยายทั้งหมด';
 }
 
 function escHtml(s) {

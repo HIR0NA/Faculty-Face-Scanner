@@ -263,6 +263,9 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
         add_log(f"JARVIS: เริ่ม Crawl จาก {start_url[:60]}...")
 
         session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=2)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept-Language": "th-TH,th;q=0.9,en;q=0.8",
@@ -272,11 +275,23 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
         image_urls = {}  # img_url -> {"source_page": url, "page_title": title}
         image_norms = {}  # normalized_url -> original_url (for thumb dedup)
 
+        def _is_search_page(title, page_url):
+            t = (title or "").lower()
+            u = (page_url or "").lower()
+            return "search results" in t or "ผลการค้นหา" in t or "?s=" in u or "&s=" in u
+
         def _add_image(abs_url, source_page, page_title):
             """Add image URL if not a duplicate (exact or thumb/full-size)."""
-            if abs_url in image_urls:
-                return False
             norm = _normalize_image_url(abs_url)
+
+            # If image already seen, but was previously assigned a generic search page title
+            # and now we have a specific article title, update it!
+            if abs_url in image_urls:
+                prev = image_urls[abs_url]
+                if _is_search_page(prev.get("page_title"), prev.get("source_page")) and not _is_search_page(page_title, source_page):
+                    image_urls[abs_url] = {"source_page": source_page, "page_title": page_title}
+                return False
+
             if norm in image_norms:
                 existing = image_norms[norm]
                 # Keep full-size over thumbnail
@@ -347,43 +362,70 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
             add_log(f"CRAWL [d={depth}] {url[:60]}... +{new_count} imgs (total: {len(image_urls)})")
             time.sleep(0.3)
 
-            # Follow pagination links at the same depth
+            is_search_page = "?s=" in url or "&s=" in url
+            SKIP_PATH_SUBSTRINGS = (
+                "/author/", "/tag/", "/category/", "/feed/", "/wp-json/", "/wp-includes/",
+                "/wp-content/plugins/", "/comments/", "/trackback/", "/xmlrpc",
+                "/privacy-policy", "/contact", "/about", "/map", "/authority",
+                "/university-structure", "/history-university", "/vice_president",
+                "/university-logo", "/login", "/register", "/sdu-goal", "/regulations"
+            )
+
+            # Follow search pagination only when on search results
             pagination_links = set()
-            for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
-                if not href or href.startswith("#"):
-                    continue
-                text = a.get_text(strip=True).lower()
-                classes = " ".join(a.get("class", []))
-                parent_classes = " ".join(a.parent.get("class", [])) if a.parent else ""
-                is_page = any(k in text for k in ("next", "ถัดไป", "»", "›", ">>")) or \
-                    any(k in classes for k in ("page", "pagi", "next")) or \
-                    any(k in parent_classes for k in ("page", "pagi")) or \
-                    re.match(r'^\d+$', text)
-                if is_page:
-                    abs_link = urljoin(url, href)
-                    if urlparse(abs_link).netloc == allowed_domain:
-                        pagination_links.add(abs_link)
-
-            for plink in sorted(pagination_links):
-                if stop_event.is_set():
-                    return
-                crawl(plink, depth)  # same depth for pagination
-
-            # Follow links
-            if depth < max_depth:
-                links = set()
+            if is_search_page:
                 for a in soup.find_all("a", href=True):
                     href = a["href"].strip()
                     if not href or href.startswith("#"):
                         continue
                     abs_link = urljoin(url, href)
+                    if urlparse(abs_link).netloc == allowed_domain:
+                        # Only follow pagination links that retain the search query
+                        if ("/page/" in abs_link or "paged=" in abs_link) and ("?s=" in abs_link or "&s=" in abs_link):
+                            pagination_links.add(abs_link)
+
+            for plink in sorted(pagination_links):
+                if stop_event.is_set():
+                    return
+                crawl(plink, depth)  # same depth for search result pagination
+
+            # Follow article links
+            if depth < max_depth:
+                links = set()
+                # On search page, prioritize links from main content area
+                search_container = soup.find(["main", "article"]) or soup.find(id=["main", "content", "primary"])
+                container = search_container if (is_search_page and search_container) else soup
+
+                for a in container.find_all("a", href=True):
+                    href = a["href"].strip()
+                    if not href or href.startswith("#"):
+                        continue
+                    abs_link = urljoin(url, href)
                     parsed = urlparse(abs_link)
-                    if parsed.netloc == allowed_domain:
-                        skip_exts = {".pdf", ".doc", ".docx", ".xls", ".xlsx",
-                                     ".zip", ".mp4", ".mp3"}
-                        if not any(parsed.path.lower().endswith(e) for e in skip_exts):
+                    if parsed.netloc != allowed_domain:
+                        continue
+
+                    path_lower = parsed.path.lower()
+                    if any(p in path_lower for p in SKIP_PATH_SUBSTRINGS):
+                        continue
+
+                    skip_exts = {".pdf", ".doc", ".docx", ".xls", ".xlsx",
+                                 ".zip", ".mp4", ".mp3", ".ppt", ".pptx"}
+                    if any(path_lower.endswith(e) for e in skip_exts):
+                        continue
+
+                    if abs_link in visited or abs_link in pagination_links:
+                        continue
+
+                    # If starting from search page, follow actual news/articles
+                    if is_search_page:
+                        is_article = any(k in path_lower for k in ("/201", "/202", "/256", ".html", "/news/", "/article/")) or \
+                                     a.find_parent(["article", "h2", "h3"]) is not None
+                        if is_article:
                             links.add(abs_link)
+                    else:
+                        links.add(abs_link)
+
                 for link in sorted(links):
                     if stop_event.is_set():
                         return
@@ -515,20 +557,30 @@ def run_scanner(start_url: str, allowed_domain: str, max_depth: int,
                         if not page_title:
                             page_title = "ไม่ระบุ"
                         
-                        # Create safe folder name
+                        # Create safe folder name (จำกัดความยาวป้องกัน Windows path limit)
                         safe_folder = re.sub(r'[\\/*?:"<>|]', "", page_title).strip()
                         if not safe_folder: safe_folder = "unknown"
+                        if len(safe_folder) > 80:
+                            safe_folder = safe_folder[:80].rstrip()
                         
-                        event_dir = OUTPUT_DIR / safe_folder
-                        event_dir.mkdir(exist_ok=True)
+                        try:
+                            event_dir = OUTPUT_DIR / safe_folder
+                            event_dir.mkdir(exist_ok=True)
+                        except OSError:
+                            # ถ้าสร้างโฟลเดอร์ไม่ได้ ให้ใช้โฟลเดอร์หลัก
+                            event_dir = OUTPUT_DIR
+                            safe_folder = ""
                         
-                        rel_path = f"{safe_folder}/{filename}"
+                        rel_path = f"{safe_folder}/{filename}" if safe_folder else filename
 
                         # Save file (รองรับโฟลเดอร์ภาษาไทยบน Windows)
-                        is_success, buffer = cv2.imencode(".jpg", annotated)
-                        if is_success:
-                            with open(event_dir / filename, "wb") as f:
-                                f.write(buffer)
+                        try:
+                            is_success, buffer = cv2.imencode(".jpg", annotated)
+                            if is_success:
+                                with open(event_dir / filename, "wb") as f:
+                                    f.write(buffer)
+                        except OSError as e:
+                            add_log(f"WARNING: บันทึกไฟล์ไม่ได้: {str(e)[:60]}")
 
                         match_record = {
                             "filename": rel_path,
@@ -657,10 +709,17 @@ def api_start_scan():
     threshold = float(data.get("threshold", 0.40))
     det_size_val = int(data.get("det_size", 1280))
 
-    # Clear old results
-    for f in OUTPUT_DIR.iterdir():
-        if f.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-            f.unlink()
+    # Clear old results (รองรับโฟลเดอร์ย่อยที่จัดกลุ่มตามงาน)
+    for item in OUTPUT_DIR.iterdir():
+        if item.name == ".gitkeep":
+            continue
+        try:
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+        except Exception as e:
+            log.warning(f"ลบ {item.name} ไม่ได้: {e}")
 
     stop_event.clear()
     scanner_thread = threading.Thread(
@@ -718,11 +777,16 @@ def api_load_csv():
 @app.route("/api/results/clear", methods=["POST"])
 def api_clear_results():
     """ล้างผลลัพธ์"""
-    for f in OUTPUT_DIR.iterdir():
-        if f.is_file():
-            f.unlink()
-        elif f.is_dir():
-            shutil.rmtree(f)
+    for item in OUTPUT_DIR.iterdir():
+        if item.name == ".gitkeep":
+            continue
+        try:
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+        except Exception as e:
+            log.warning(f"ลบ {item.name} ไม่ได้: {e}")
     with scanner_lock:
         scanner_state["matches"] = []
         scanner_state["matches_found"] = 0
